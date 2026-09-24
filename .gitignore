@@ -1,0 +1,8 @@
+AGENTS.md
+.agents/
+web/node_modules/
+web/dist/
+.cache/
+data/
+*.db
+*.db.lock

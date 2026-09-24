@@ -1,0 +1,9 @@
+.git
+.agents
+.cache
+data
+web/node_modules
+web/dist
+AGENTS.md
+*.db
+*.db.lock
