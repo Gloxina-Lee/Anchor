@@ -190,6 +190,9 @@ input[type="checkbox"] { accent-color: var(--color-accent-strong); }
 .settings-section .section-description { margin-bottom: 22px; }
 .length-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 17px; max-width: 440px; margin-bottom: 19px; }
 .settings-section .field-hint { margin: 0 0 24px; }
+.root-detail { display: grid; gap: 12px; margin-top: 20px; }
+.root-detail .field-hint { margin: 0; }
+.field .html-editor { min-height: 220px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .78rem; line-height: 1.6; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-top: 22px; border-top: 1px solid var(--color-line); cursor: pointer; }
 .switch-row > span { display: grid; gap: 6px; }
 .switch-row strong { font-size: .82rem; }

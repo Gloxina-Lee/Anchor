@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.etcd.io/bbolt"
 )
 
 func TestServiceLifecycle(t *testing.T) {
@@ -50,9 +52,9 @@ func TestServiceLifecycle(t *testing.T) {
 	}
 
 	root := call("GET", "/", "", "", nil)
-	assertCode(root, 200)
-	if strings.Contains(root.Body.String(), "admin app") {
-		t.Fatal("root displayed the management application")
+	assertCode(root, 302)
+	if root.Header().Get("Location") != "/admin/" || root.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("root did not default to an uncached admin redirect")
 	}
 	assertCode(call("GET", "/admin/settings", "", "", nil), 200)
 	assertCode(call("POST", "/api/links", `{}`, "", nil), 401)
@@ -66,6 +68,56 @@ func TestServiceLifecycle(t *testing.T) {
 	if err := json.Unmarshal(setup.Body.Bytes(), &auth); err != nil || auth.CSRF == "" {
 		t.Fatal("setup did not issue a CSRF token", err)
 	}
+	rootSettings := defaultSettings()
+	putRoot := func() *httptest.ResponseRecorder {
+		t.Helper()
+		data, err := json.Marshal(rootSettings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return call("PUT", "/api/settings", string(data), auth.CSRF, cookie)
+	}
+	rootSettings.RootBehavior = "redirect"
+	rootSettings.RootRedirectURL = "example.org"
+	response := putRoot()
+	assertCode(response, 200)
+	if !strings.Contains(response.Body.String(), `"rootRedirectUrl":"https://example.org"`) {
+		t.Fatalf("redirect URL was not normalized: %s", response.Body.String())
+	}
+	for _, method := range []string{"GET", "HEAD"} {
+		redirect := call(method, "/", "", "", nil)
+		assertCode(redirect, 302)
+		if redirect.Header().Get("Location") != "https://example.org" || redirect.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("wrong root redirect for %s", method)
+		}
+	}
+	rootSettings.RootRedirectURL = "javascript:alert(1)"
+	assertCode(putRoot(), 400)
+	rootSettings.RootRedirectURL = "/admin/"
+	assertCode(putRoot(), 400)
+	rootSettings.RootBehavior = "unknown"
+	assertCode(putRoot(), 400)
+	rootSettings.RootBehavior = "notFound"
+	assertCode(putRoot(), 200)
+	assertCode(call("GET", "/", "", "", nil), 404)
+	rootSettings.RootBehavior = "html"
+	rootSettings.RootHTML = "<!doctype html><html><body>自定义首页</body></html>"
+	assertCode(putRoot(), 200)
+	html := call("GET", "/", "", "", nil)
+	assertCode(html, 200)
+	if html.Body.String() != rootSettings.RootHTML || !strings.HasPrefix(html.Header().Get("Content-Type"), "text/html") || !strings.Contains(html.Header().Get("Content-Security-Policy"), "sandbox") {
+		t.Fatal("custom HTML was not served as an isolated page")
+	}
+	head := call("HEAD", "/", "", "", nil)
+	assertCode(head, 200)
+	if head.Body.Len() != 0 {
+		t.Fatal("HEAD returned the custom HTML body")
+	}
+	rootSettings.RootHTML = " "
+	assertCode(putRoot(), 400)
+	rootSettings.RootHTML = strings.Repeat("x", 256<<10+1)
+	assertCode(putRoot(), 400)
+	assertCode(call("GET", "/admin/", "", "", nil), 200)
 	assertCode(call("POST", "/auth/setup", `{"username":"other","password":"long-password-123"}`, "", nil), 409)
 	assertCode(call("POST", "/api/links", `{}`, "", cookie), 403)
 	assertCode(call("POST", "/api/links", `{"code":"API","destination":"https://example.org"}`, auth.CSRF, cookie), 400)
@@ -118,6 +170,9 @@ func TestServiceLifecycle(t *testing.T) {
 
 	settings := `{"minLength":6,"maxLength":32,"excludeSimilar":true,"reuseCodes":false}`
 	assertCode(call("PUT", "/api/settings", settings, auth.CSRF, cookie), 200)
+	if call("GET", "/", "", "", nil).Header().Get("Location") != "/admin/" {
+		t.Fatal("old settings payload did not use the new default root behavior")
+	}
 	assertCode(call("DELETE", "/api/links/"+first.ID, "", auth.CSRF, cookie), 204)
 	assertCode(call("GET", "/hello1", "", "", nil), 404)
 	assertCode(call("POST", "/api/links", `{"code":"hello1","destination":"https://example.org"}`, auth.CSRF, cookie), 409)
@@ -166,6 +221,34 @@ func TestGeneratedCodeAndSettings(t *testing.T) {
 	}
 }
 
+func TestLegacySettingsDefaultRootBehavior(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "anchor.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	legacy := struct {
+		MinLength      int  `json:"minLength"`
+		MaxLength      int  `json:"maxLength"`
+		ExcludeSimilar bool `json:"excludeSimilar"`
+		ReuseCodes     bool `json:"reuseCodes"`
+	}{MinLength: 6, MaxLength: 32, ReuseCodes: true}
+	if err := store.db.Update(func(tx *bbolt.Tx) error {
+		return putJSON(tx.Bucket(metaBucket), settingsKey, legacy)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := store.Settings()
+	if err != nil || settings.RootBehavior != "admin" {
+		t.Fatalf("old settings did not default to admin redirect: %v, %+v", err, settings)
+	}
+	response := httptest.NewRecorder()
+	NewServer(store, t.TempDir(), true).ServeHTTP(response, httptest.NewRequest("GET", "/", nil))
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/admin/" {
+		t.Fatal("old settings did not redirect root to admin")
+	}
+}
+
 func TestDataPersistsAfterRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "anchor.db")
 	store, err := OpenStore(path)
@@ -175,7 +258,7 @@ func TestDataPersistsAfterRestart(t *testing.T) {
 	if err := store.CreateAccount("owner", "stored-hash"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateSettings(Settings{MinLength: 4, MaxLength: 12, ReuseCodes: false}); err != nil {
+	if err := store.UpdateSettings(Settings{MinLength: 4, MaxLength: 12, ReuseCodes: false, RootBehavior: "redirect", RootRedirectURL: "https://example.org/home"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = store.CreateLink(Link{Destination: "https://example.org", Note: "重启后保留", CreatedAt: time.Now().UTC(), StartsAt: time.Now().UTC()}, "persist1")
@@ -195,7 +278,7 @@ func TestDataPersistsAfterRestart(t *testing.T) {
 		t.Fatalf("account did not persist: %v", err)
 	}
 	settings, err := store.Settings()
-	if err != nil || settings.MaxLength != 12 || settings.ReuseCodes {
+	if err != nil || settings.MaxLength != 12 || settings.ReuseCodes || settings.RootBehavior != "redirect" || settings.RootRedirectURL != "https://example.org/home" {
 		t.Fatalf("settings did not persist: %v", err)
 	}
 	link, err := store.ActiveLink("persist1")

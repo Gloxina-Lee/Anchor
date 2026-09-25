@@ -389,11 +389,43 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "随机短码长度须在 1–128 之间，最小值不能大于最大值")
 		return
 	}
+	if settings.RootBehavior == "" {
+		settings.RootBehavior = "admin"
+	}
+	if len(settings.RootHTML) > 256<<10 {
+		apiError(w, http.StatusBadRequest, "根路径 HTML 不能超过 256 KB")
+		return
+	}
+	switch settings.RootBehavior {
+	case "admin", "notFound":
+	case "redirect":
+		settings.RootRedirectURL = normalizeRootRedirectURL(settings.RootRedirectURL)
+		if !validDestination(settings.RootRedirectURL) {
+			apiError(w, http.StatusBadRequest, "请输入有效的 HTTP 或 HTTPS 跳转网址")
+			return
+		}
+	case "html":
+		if strings.TrimSpace(settings.RootHTML) == "" {
+			apiError(w, http.StatusBadRequest, "请填写根路径的 HTML 内容")
+			return
+		}
+	default:
+		apiError(w, http.StatusBadRequest, "根路径行为无效")
+		return
+	}
 	if err := s.store.UpdateSettings(settings); err != nil {
 		serverError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func normalizeRootRedirectURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw != "" && !strings.Contains(raw, ":") {
+		return "https://" + raw
+	}
+	return raw
 }
 
 func (s *Server) public(w http.ResponseWriter, r *http.Request) {
@@ -402,9 +434,28 @@ func (s *Server) public(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/" {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = io.WriteString(w, "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title></title><body></body></html>")
+		settings, err := s.store.Settings()
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		switch settings.RootBehavior {
+		case "admin":
+			http.Redirect(w, r, "/admin/", http.StatusFound)
+		case "notFound":
+			http.NotFound(w, r)
+		case "redirect":
+			http.Redirect(w, r, settings.RootRedirectURL, http.StatusFound)
+		case "html":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-top-navigation-by-user-activation")
+			if r.Method != http.MethodHead {
+				_, _ = io.WriteString(w, settings.RootHTML)
+			}
+		default:
+			serverError(w, fmt.Errorf("invalid root behavior: %q", settings.RootBehavior))
+		}
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

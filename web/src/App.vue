@@ -8,7 +8,7 @@ const csrf = ref('')
 const username = ref('')
 const credentials = reactive({ username: '', password: '' })
 const links = ref([])
-const settings = reactive({ minLength: 6, maxLength: 32, excludeSimilar: false, reuseCodes: true })
+const settings = reactive({ minLength: 6, maxLength: 32, excludeSimilar: false, reuseCodes: true, rootBehavior: 'admin', rootRedirectUrl: '', rootHtml: '' })
 const draft = reactive({ destination: '', code: '', note: '', startChoice: 'now', startCustom: '', expiryChoice: 'forever', expiryCustom: '' })
 const selected = ref([])
 const search = ref('')
@@ -292,6 +292,7 @@ async function saveSettings() {
     const saved = await request('/api/settings', 'PUT', {
       minLength: Number(settings.minLength), maxLength: Number(settings.maxLength),
       excludeSimilar: settings.excludeSimilar, reuseCodes: settings.reuseCodes,
+      rootBehavior: settings.rootBehavior, rootRedirectUrl: settings.rootRedirectUrl, rootHtml: settings.rootHtml,
     })
     Object.assign(settings, saved)
     flash('设置已保存')
@@ -384,8 +385,33 @@ async function saveSettings() {
         </div>
       </main>
 
-      <main v-else class="page-content settings-page"><header class="page-heading"><div><span class="eyebrow">PREFERENCES / SETTINGS</span><h1>设置<span class="heading-dot">.</span></h1><p>调整短码生成规则与过期短码的处理方式。</p></div></header>
-        <form class="settings-layout" @submit.prevent="saveSettings"><section class="surface settings-section"><div class="section-head"><div><span class="section-kicker">SHORT CODES</span><h2>短码生成</h2></div></div><p class="section-description">随机短码从最小长度开始。发生冲突时会重试，并在必要时增加长度。</p><div class="length-grid"><label class="field"><span>最小长度</span><input v-model.number="settings.minLength" type="number" min="1" max="128" required /></label><label class="field"><span>最大长度</span><input v-model.number="settings.maxLength" type="number" min="1" max="128" required /></label></div><p class="field-hint">默认 6–32 位。手动短码最少 1 位，最多为这里设置的最大长度。</p><label class="switch-row"><span><strong>排除相近字符</strong><small>随机生成时避开 0/O、1/i/l 等易混淆字符。</small></span><input v-model="settings.excludeSimilar" type="checkbox" role="switch" /></label></section><section class="surface settings-section"><div class="section-head"><div><span class="section-kicker">REUSE POLICY</span><h2>短码复用</h2></div></div><p class="section-description">决定到期或删除后的短码是否可以被新链接再次使用。</p><label class="switch-row"><span><strong>允许重新分配短码</strong><small>开启后，旧链接可能在未来指向新的目标网址。</small></span><input v-model="settings.reuseCodes" type="checkbox" role="switch" /></label></section><div class="settings-actions"><button class="button button-primary" type="submit" :disabled="busy">{{ busy ? '正在保存…' : '保存设置' }}</button></div></form>
+      <main v-else class="page-content settings-page">
+        <header class="page-heading"><div><span class="eyebrow">PREFERENCES / SETTINGS</span><h1>设置<span class="heading-dot">.</span></h1><p>调整根路径、短码生成与过期短码的处理方式。</p></div></header>
+        <form class="settings-layout" @submit.prevent="saveSettings">
+          <section class="surface settings-section">
+            <div class="section-head"><div><span class="section-kicker">ROOT PATH</span><h2>根路径</h2></div></div>
+            <p class="section-description">指定访问本站根路径 / 时的响应，不影响 /admin/ 管理页面和短链接。</p>
+            <label class="field"><span>访问根路径时</span>
+              <select v-model="settings.rootBehavior">
+                <option value="admin">跳转至 /admin/</option>
+                <option value="notFound">返回 404</option>
+                <option value="redirect">跳转至其他 URL</option>
+                <option value="html">返回指定的 HTML 页面</option>
+              </select>
+            </label>
+            <div v-if="settings.rootBehavior === 'redirect'" class="root-detail">
+              <label class="field"><span>跳转目标</span><input v-model="settings.rootRedirectUrl" type="text" placeholder="例如 example.org 或 https://example.org/" required /></label>
+              <p class="field-hint">可输入完整的 HTTP/HTTPS 网址；只输入域名时自动使用 HTTPS。</p>
+            </div>
+            <div v-if="settings.rootBehavior === 'html'" class="root-detail">
+              <label class="field"><span>HTML 页面内容</span><textarea v-model="settings.rootHtml" class="html-editor" spellcheck="false" placeholder="<!doctype html>&#10;<html lang=&#34;zh-CN&#34;>..." required></textarea></label>
+              <p class="field-hint">填写完整的 HTML 页面，最多 256 KB。页面以独立来源运行，无法读取管理页面数据。</p>
+            </div>
+          </section>
+          <section class="surface settings-section"><div class="section-head"><div><span class="section-kicker">SHORT CODES</span><h2>短码生成</h2></div></div><p class="section-description">随机短码从最小长度开始。发生冲突时会重试，并在必要时增加长度。</p><div class="length-grid"><label class="field"><span>最小长度</span><input v-model.number="settings.minLength" type="number" min="1" max="128" required /></label><label class="field"><span>最大长度</span><input v-model.number="settings.maxLength" type="number" min="1" max="128" required /></label></div><p class="field-hint">默认 6–32 位。手动短码最少 1 位，最多为这里设置的最大长度。</p><label class="switch-row"><span><strong>排除相近字符</strong><small>随机生成时避开 0/O、1/i/l 等易混淆字符。</small></span><input v-model="settings.excludeSimilar" type="checkbox" role="switch" /></label></section>
+          <section class="surface settings-section"><div class="section-head"><div><span class="section-kicker">REUSE POLICY</span><h2>短码复用</h2></div></div><p class="section-description">决定到期或删除后的短码是否可以被新链接再次使用。</p><label class="switch-row"><span><strong>允许重新分配短码</strong><small>开启后，旧链接可能在未来指向新的目标网址。</small></span><input v-model="settings.reuseCodes" type="checkbox" role="switch" /></label></section>
+          <div class="settings-actions"><button class="button button-primary" type="submit" :disabled="busy">{{ busy ? '正在保存…' : '保存设置' }}</button></div>
+        </form>
       </main>
     </div>
   </div>

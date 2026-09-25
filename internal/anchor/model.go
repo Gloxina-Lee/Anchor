@@ -3,14 +3,17 @@ package anchor
 import "time"
 
 type Settings struct {
-	MinLength      int  `json:"minLength"`
-	MaxLength      int  `json:"maxLength"`
-	ExcludeSimilar bool `json:"excludeSimilar"`
-	ReuseCodes     bool `json:"reuseCodes"`
+	MinLength       int    `json:"minLength"`
+	MaxLength       int    `json:"maxLength"`
+	ExcludeSimilar  bool   `json:"excludeSimilar"`
+	ReuseCodes      bool   `json:"reuseCodes"`
+	RootBehavior    string `json:"rootBehavior"`
+	RootRedirectURL string `json:"rootRedirectUrl"`
+	RootHTML        string `json:"rootHtml"`
 }
 
 func defaultSettings() Settings {
-	return Settings{MinLength: 6, MaxLength: 32, ReuseCodes: true}
+	return Settings{MinLength: 6, MaxLength: 32, ReuseCodes: true, RootBehavior: "admin"}
 }
 
 type Link struct {

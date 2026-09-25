@@ -96,10 +96,16 @@ func (s *Store) Settings() (Settings, error) {
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		return json.Unmarshal(tx.Bucket(metaBucket).Get(settingsKey), &settings)
 	})
+	if settings.RootBehavior == "" {
+		settings.RootBehavior = "admin"
+	}
 	return settings, err
 }
 
 func (s *Store) UpdateSettings(settings Settings) error {
+	if settings.RootBehavior == "" {
+		settings.RootBehavior = "admin"
+	}
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		return putJSON(tx.Bucket(metaBucket), settingsKey, settings)
 	})
